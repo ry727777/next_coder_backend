@@ -3,8 +3,10 @@ package com.nextcoder.backend.controller;
 import com.nextcoder.backend.entity.*;
 import com.nextcoder.backend.service.QuestionService;
 import org.springframework.web.bind.annotation.*;
+import com.nextcoder.backend.dto.CreateQuestionRequest;
 
 import java.util.List;
+
 
 @RestController
 @RequestMapping("/api/questions")
@@ -16,6 +18,12 @@ public class QuestionController {
     public QuestionController(QuestionService service) {
         this.service = service;
     }
+
+     @PostMapping
+    public Question createQuestion(@RequestBody CreateQuestionRequest request) {
+        return service.createQuestion(request);
+    }
+    
 
     @GetMapping
     public List<Question> getAll() {
@@ -34,5 +42,11 @@ public class QuestionController {
     ) {
         return service.getByLanguageAndTopic(language, topic);
     }
+
+    @GetMapping("/{id}")
+        public Question getById(@PathVariable Long id) {
+            return service.getById(id);
+        }
+
 }
 
