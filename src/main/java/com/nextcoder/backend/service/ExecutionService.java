@@ -1,124 +1,206 @@
 package com.nextcoder.backend.service;
 
 import com.nextcoder.backend.dto.*;
+import com.nextcoder.backend.entity.*;
+import com.nextcoder.backend.repository.*;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
 import java.nio.file.*;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class ExecutionService {
-    public CodeExecutionResponse execute(CodeExecutionRequest request) {
 
-    long startTime = System.currentTimeMillis();
-    Path sandboxPath = null;
+    private final TestCaseRepository testCaseRepository;
+    private final SubmissionRepository submissionRepository;
 
-    try {
-        // 🔹 Create unique sandbox folder
-        String folderName = "sandbox_" + UUID.randomUUID();
-        sandboxPath = Files.createDirectory(Paths.get(folderName));
+    public ExecutionService(TestCaseRepository testCaseRepository, SubmissionRepository submissionRepository) {
+        this.testCaseRepository = testCaseRepository;
+        this.submissionRepository = submissionRepository;
+    }
 
-        // 🔹 Write user code to Main.java
-        Path javaFile = sandboxPath.resolve("Main.java");
-        Files.writeString(javaFile, request.getCode());
+    // 🔥 MAIN METHOD (Run / Submit)
+    public CodeExecutionResponse execute(CodeExecutionRequest request, boolean isRun) {
 
-        // 🔹 Docker execution command
-        ProcessBuilder processBuilder = new ProcessBuilder(
-                "docker", "run", "--rm",
-                "-i",   // 🔥 VERY IMPORTANT
-                "--memory=256m",
-                "--cpus=0.5",
-                "-v", sandboxPath.toAbsolutePath() + ":/app",
-                "nextcoder-java-sandbox",
-                "sh", "-c",
-                "javac /app/Main.java && java -cp /app Main"
-        );
+        List<TestCase> testCases = isRun
+                ? testCaseRepository.findByProblemIdAndIsSample(request.getProblemId(), true)
+                : testCaseRepository.findAllByProblemId(request.getProblemId());
 
-        processBuilder.redirectErrorStream(false); // keep error separate
-        Process process = processBuilder.start();
+        int passed = 0;
+        List<TestCaseResult> results = new ArrayList<>();
 
-        // 🔥 SEND INPUT
-        if (request.getInput() != null && !request.getInput().isEmpty()) {
-            try (BufferedWriter writer =
-                         new BufferedWriter(new OutputStreamWriter(process.getOutputStream()))) {
-                writer.write(request.getInput());
-                writer.flush();
+        for (TestCase tc : testCases) {
+
+            ExecutionResult result = runSingleTestCase(
+                    request.getCode(),
+                    tc.getInputData());
+
+            // 🔥 HANDLE COMPILATION / RUNTIME ERROR
+            if (result.getError() != null) {
+
+                String errorMsg = result.getError();
+
+                String status;
+
+                if (errorMsg.contains("error:")) {
+                    status = "COMPILATION_ERROR";
+                } else {
+                    status = "RUNTIME_ERROR";
+                }
+
+                results.add(new TestCaseResult(
+                        tc.getInputData(),
+                        tc.getExpectedOutput(),
+                        errorMsg,
+                        status));
+
+                return new CodeExecutionResponse(
+                        testCases.size(),
+                        0,
+                        status,
+                        results);
             }
+
+            // ✅ NORMAL FLOW
+            boolean isPassed = result.getOutput().trim()
+                    .equals(tc.getExpectedOutput().trim());
+
+            if (isPassed)
+                passed++;
+
+            results.add(new TestCaseResult(
+                    tc.getInputData(),
+                    tc.getExpectedOutput(),
+                    result.getOutput(),
+                    isPassed ? "PASSED" : "FAILED"));
         }
 
-        // 🔥 READ STDOUT IN PARALLEL
-        StringBuilder output = new StringBuilder();
-        Thread outputThread = new Thread(() -> {
-            try (BufferedReader reader =
-                         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        String verdict = (passed == testCases.size()) ? "AC" : "WA";
 
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
-                }
-            } catch (Exception ignored) {}
-        });
+        if (!isRun) {
+            Submission submission = new Submission();
 
-        // 🔥 READ STDERR IN PARALLEL
-        StringBuilder errorOutput = new StringBuilder();
-        Thread errorThread = new Thread(() -> {
-            try (BufferedReader reader =
-                         new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            submission.setCode(request.getCode());
+            submission.setLanguage(request.getLanguage());
+            submission.setVerdict(verdict);
+            submission.setTotalTestCases(testCases.size());
+            submission.setPassedTestCases(passed);
+            submission.setExecutionTime(0);
 
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    errorOutput.append(line).append("\n");
-                }
-            } catch (Exception ignored) {}
-        });
+            // set problem
+            Question q = new Question();
+            q.setId(request.getProblemId());
+            submission.setProblem(q);
 
-        outputThread.start();
-        errorThread.start();
-
-        // 🔥 WAIT WITH TIME LIMIT
-        boolean finished = process.waitFor(5, TimeUnit.SECONDS);
-
-        if (!finished) {
-            process.destroyForcibly();
-            return new CodeExecutionResponse(null, "Time Limit Exceeded", 0);
-        }
-
-        // Wait for stream threads to finish
-        outputThread.join();
-        errorThread.join();
-
-        long endTime = System.currentTimeMillis();
-
-        // 🔥 If compilation/runtime error occurred
-        if (errorOutput.length() > 0) {
-            return new CodeExecutionResponse(
-                    null,
-                    errorOutput.toString(),
-                    endTime - startTime
-            );
+            submissionRepository.save(submission);
         }
 
         return new CodeExecutionResponse(
-                output.toString(),
-                null,
-                endTime - startTime
-        );
+                testCases.size(),
+                passed,
+                verdict,
+                results);
+    }
 
-    } catch (Exception e) {
-        return new CodeExecutionResponse(null, e.getMessage(), 0);
-    } finally {
-        // 🔥 CLEAN SANDBOX
-        if (sandboxPath != null) {
-            try {
-                Files.walk(sandboxPath)
-                        .sorted((a, b) -> b.compareTo(a))
-                        .forEach(path -> {
-                            try { Files.delete(path); } catch (Exception ignored) {}
-                        });
-            } catch (Exception ignored) {}
+    // 🔥 CORE EXECUTION ENGINE (1 test case)
+    private ExecutionResult runSingleTestCase(String code, String input) {
+
+        Path sandboxPath = null;
+
+        try {
+            // 🔹 Create sandbox
+            String folderName = "sandbox_" + UUID.randomUUID();
+            sandboxPath = Files.createDirectory(Paths.get(folderName));
+
+            // 🔹 Write code
+            Path javaFile = sandboxPath.resolve("Main.java");
+            Files.writeString(javaFile, code);
+
+            // 🔹 Docker command
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                    "docker", "run", "--rm",
+                    "-i",
+                    "--memory=256m",
+                    "--cpus=1",
+                    "-v", sandboxPath.toAbsolutePath() + ":/app",
+                    "nextcoder-java-sandbox",
+                    "sh", "-c",
+                    "javac /app/Main.java && java -cp /app Main");
+
+            processBuilder.redirectErrorStream(false);
+            Process process = processBuilder.start();
+
+            // 🔥 PASS INPUT
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()))) {
+                writer.write(input);
+                writer.flush();
+            }
+
+            StringBuilder output = new StringBuilder();
+            StringBuilder errorOutput = new StringBuilder();
+
+            // 🔥 STDOUT
+            Thread outThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+
+            // 🔥 STDERR
+            Thread errThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorOutput.append(line).append("\n");
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+
+            outThread.start();
+            errThread.start();
+
+            // 🔥 Timeout
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+
+            if (!finished) {
+                process.destroyForcibly();
+                return new ExecutionResult(null, "TLE");
+            }
+
+            outThread.join();
+            errThread.join();
+
+            // 🔥 Error handling
+            if (errorOutput.length() > 0) {
+                return new ExecutionResult(null, errorOutput.toString());
+            }
+
+            return new ExecutionResult(output.toString(), null);
+
+        } catch (Exception e) {
+            return new ExecutionResult(null, "Runtime Error");
+        } finally {
+            // 🔥 CLEANUP
+            if (sandboxPath != null) {
+                try {
+                    Files.walk(sandboxPath)
+                            .sorted((a, b) -> b.compareTo(a))
+                            .forEach(path -> {
+                                try {
+                                    Files.delete(path);
+                                } catch (Exception ignored) {
+                                }
+                            });
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
-}
 }

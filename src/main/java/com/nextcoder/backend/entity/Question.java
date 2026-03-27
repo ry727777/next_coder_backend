@@ -2,6 +2,9 @@ package com.nextcoder.backend.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 
 @Entity
 @Table(name = "problems")
@@ -25,5 +28,9 @@ public class Question {
 
     private String topic;
     private String subTopic;
+
+    @OneToMany(mappedBy = "problem", cascade = CascadeType.ALL)
+    @JsonManagedReference   
+    private List<TestCase> testCases;
 }
 

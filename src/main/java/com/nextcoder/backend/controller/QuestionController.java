@@ -4,8 +4,11 @@ import com.nextcoder.backend.entity.*;
 import com.nextcoder.backend.service.QuestionService;
 import org.springframework.web.bind.annotation.*;
 import com.nextcoder.backend.dto.CreateQuestionRequest;
+import com.nextcoder.backend.dto.QuestionResponseDto;
+import com.nextcoder.backend.dto.TestCaseDto;
 
 import java.util.List;
+
 
 
 @RestController
@@ -19,10 +22,17 @@ public class QuestionController {
         this.service = service;
     }
 
-     @PostMapping
+    @PostMapping("/create")
     public Question createQuestion(@RequestBody CreateQuestionRequest request) {
         return service.createQuestion(request);
     }
+
+    @PostMapping("/testcases")
+    public String createTestCases(@RequestBody List<TestCaseDto> request) {
+        service.addTestCase(request);
+        return "Test case added successfully";
+    }
+    
     
 
     @GetMapping
@@ -44,9 +54,9 @@ public class QuestionController {
     }
 
     @GetMapping("/{id}")
-        public Question getById(@PathVariable Long id) {
-            return service.getById(id);
-        }
+    public QuestionResponseDto getById(@PathVariable Long id) {
+        return service.getById(id);
+    }
 
 }
 
