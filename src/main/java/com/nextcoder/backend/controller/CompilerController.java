@@ -15,8 +15,18 @@ public class CompilerController {
         this.service = service;
     }
 
+    // 🔹 Run code (sample test cases only)
     @PostMapping("/run")
     public CodeExecutionResponse run(@RequestBody CodeExecutionRequest request) {
-        return service.execute(request);
+         if (request.getCode() == null || request.getCode().isEmpty()) {
+                throw new RuntimeException("Code cannot be empty");
+            }
+        return service.execute(request, true);
+    }
+
+    // 🔹 Submit code (all test cases)
+    @PostMapping("/submit")
+    public CodeExecutionResponse submit(@RequestBody CodeExecutionRequest request) {
+        return service.execute(request, false);
     }
 }

@@ -1,11 +1,11 @@
 package com.nextcoder.backend.service;
 
-import com.nextcoder.backend.dto.CreateQuestionRequest;
-import com.nextcoder.backend.dto.TestCaseDto;
+import com.nextcoder.backend.dto.*;
 import com.nextcoder.backend.entity.*;
 import com.nextcoder.backend.repository.*;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -61,8 +61,52 @@ public class QuestionService {
         return repository.findByLanguageAndTopic(language, topic);
     }
 
-    public Question getById(Long id) {
-    return repository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Question not found with id: " + id));
+    public QuestionResponseDto getById(Long id) {
+
+        Question q = repository.findById(id).orElseThrow();
+
+        List<TestCaseDto> testCases = new ArrayList<>();
+
+        for (TestCase tc : q.getTestCases()) {
+
+            TestCaseDto dto = new TestCaseDto();
+            dto.setInputData(tc.getInputData());
+            dto.setExpectedOutput(tc.getExpectedOutput());
+            dto.setSample(tc.isSample());
+
+            testCases.add(dto);
+        }
+
+        QuestionResponseDto res = new QuestionResponseDto();
+        res.setId(q.getId());
+        res.setTitle(q.getTitle());
+        res.setDescription(q.getDescription());
+        res.setTestCases(testCases);
+
+        return res;
     }
+
+    public void addTestCase(List<TestCaseDto> dtos) {
+
+        List<TestCase> testCases = new ArrayList<>();
+
+        for (TestCaseDto dto : dtos) {
+
+            TestCase testCase = new TestCase();
+
+            testCase.setInputData(dto.getInputData());
+            testCase.setExpectedOutput(dto.getExpectedOutput());
+            testCase.setSample(dto.isSample());
+
+            Question q = new Question();
+            q.setId(dto.getProblemId());
+
+            testCase.setProblem(q);
+
+            testCases.add(testCase);
+        }
+
+        testCaseRepository.saveAll(testCases);
+    }
+
 }

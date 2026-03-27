@@ -1,4 +1,6 @@
 package com.nextcoder.backend.entity;
+import com.fasterxml.jackson.annotation.JsonBackReference;
+
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -13,6 +15,7 @@ public class TestCase {
 
     @ManyToOne
     @JoinColumn(name = "problem_id", nullable = false)
+    @JsonBackReference 
     private Question problem;
 
     @Column(columnDefinition = "TEXT")

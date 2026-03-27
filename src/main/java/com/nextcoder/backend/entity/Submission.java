@@ -1,4 +1,6 @@
 package com.nextcoder.backend.entity;
+import java.time.LocalDateTime;
+
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -22,5 +24,12 @@ public class Submission {
 
     private String language;
 
-    private String status;
+    private String verdict; // AC / WA / TLE / RE
+
+    private int totalTestCases;
+    private int passedTestCases;
+
+    private long executionTime;
+
+    private LocalDateTime submittedAt;
 }
